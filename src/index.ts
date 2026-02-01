@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { program } from "commander";
 import { loadConfig } from "./config.js";
 import { scrapeAllAccounts } from "./scraper.js";
-import { transformTransactions, shouldSkipTransaction, type EnrichedTransaction } from "./transformer.js";
-import { writeCSV, writeCSVPerAccount, toCSV } from "./csv-writer.js";
+import { transformTransactions, filterAndPartition, groupByAccount, calculateSummary, type EnrichedTransaction } from "./transformer.js";
+import { toCSV, generateFilename } from "./csv-writer.js";
 import { createAuditLogger } from "./audit-logger.js";
 import { reconcile, formatReconcileReport } from "./reconcile.js";
 
@@ -26,6 +28,10 @@ program
       daysBack: parseInt(options.daysBack, 10),
     });
 
+    for (const warning of config.warnings) {
+      console.warn(warning);
+    }
+
     if (options.output) {
       config.outputDir = options.output;
     }
@@ -34,28 +40,27 @@ program
     const results = await scrapeAllAccounts(
       config.accounts,
       config.startDate,
-      config.showBrowser
+      config.showBrowser,
+      console.log
     );
 
     auditLogger.recordScrapeResults(results);
 
-    const allTransactions: EnrichedTransaction[] = [];
+    const allRawTransactions: EnrichedTransaction[] = [];
     for (const result of results) {
       if (result.success) {
-        for (const txn of result.transactions) {
-          if (shouldSkipTransaction(txn)) {
-            const reason = txn.status === "pending" ? "Pending" : "Zero amount";
-            auditLogger.recordSkipped(txn, reason);
-          } else {
-            allTransactions.push(txn);
-          }
-        }
+        allRawTransactions.push(...result.transactions);
       }
+    }
+
+    const { kept: allTransactions, skipped } = filterAndPartition(allRawTransactions);
+    for (const { txn, reason } of skipped) {
+      auditLogger.recordSkipped(txn, reason);
     }
 
     if (allTransactions.length === 0) {
       console.log("\nNo transactions to export.");
-      auditLogger.save();
+      saveAuditLog(auditLogger);
       return;
     }
 
@@ -64,7 +69,7 @@ program
     if (options.dryRun) {
       printDryRunSummary(allTransactions);
       console.log("\n[Dry run - no files written]");
-      auditLogger.save();
+      saveAuditLog(auditLogger);
       return;
     }
 
@@ -95,7 +100,7 @@ program
       auditLogger.recordOutput(rows, outputPath, csvContent);
     }
 
-    const logPath = auditLogger.save();
+    const logPath = saveAuditLog(auditLogger);
     console.log(`\nAudit log saved to: ${logPath}`);
     console.log("\nDone!");
   });
@@ -109,7 +114,9 @@ program
     console.log(`\nReconciling: ${source} vs ${target}\n`);
 
     try {
-      const result = reconcile(source, target);
+      const sourceContent = readFileSync(source, "utf-8");
+      const targetContent = readFileSync(target, "utf-8");
+      const result = reconcile(sourceContent, targetContent, source, target);
       const report = formatReconcileReport(result);
       console.log(report);
 
@@ -128,6 +135,10 @@ program
   .action(() => {
     const config = loadConfig();
 
+    for (const warning of config.warnings) {
+      console.warn(warning);
+    }
+
     console.log("\nConfigured accounts:\n");
     for (const account of config.accounts) {
       const status = account.enabled ? "enabled" : "disabled (missing credentials)";
@@ -142,47 +153,90 @@ program.action(() => {
 
 program.parse();
 
-function groupByAccount(transactions: EnrichedTransaction[]): Map<string, EnrichedTransaction[]> {
-  const byAccount = new Map<string, EnrichedTransaction[]>();
-
-  for (const txn of transactions) {
-    const key = txn.accountName ?? "unknown";
-    const list = byAccount.get(key) ?? [];
-    list.push(txn);
-    byAccount.set(key, list);
+function writeCSV(
+  rows: ReturnType<typeof transformTransactions>,
+  outputDir: string,
+  filename?: string
+): string {
+  if (!existsSync(outputDir)) {
+    mkdirSync(outputDir, { recursive: true });
   }
 
-  return byAccount;
+  const outputFilename = filename ?? generateFilename();
+  const outputPath = join(outputDir, outputFilename);
+  const csv = toCSV(rows);
+  writeFileSync(outputPath, csv, "utf-8");
+  return outputPath;
+}
+
+function writeCSVPerAccount(
+  rowsByAccount: Map<string, ReturnType<typeof transformTransactions>>,
+  outputDir: string
+): string[] {
+  const paths: string[] = [];
+
+  for (const [accountName, rows] of rowsByAccount) {
+    if (rows.length === 0) continue;
+
+    const safeName = accountName.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
+    const filename = generateFilename(`ynab-${safeName}`);
+    const path = writeCSV(rows, outputDir, filename);
+    paths.push(path);
+  }
+
+  return paths;
+}
+
+const LOG_DIR = "./logs";
+const LOG_RETENTION_DAYS = 14;
+
+function saveAuditLog(auditLogger: ReturnType<typeof createAuditLogger>): string {
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync(LOG_DIR, { recursive: true });
+  }
+
+  cleanOldLogs(LOG_DIR, LOG_RETENTION_DAYS);
+
+  const filepath = join(LOG_DIR, auditLogger.getFilename());
+  writeFileSync(filepath, auditLogger.format(), "utf-8");
+  return filepath;
+}
+
+function cleanOldLogs(logDir: string, retentionDays: number) {
+  if (!existsSync(logDir)) return;
+
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
+  try {
+    const files = readdirSync(logDir);
+    for (const file of files) {
+      if (!file.startsWith("run-") || !file.endsWith(".log")) continue;
+
+      const filepath = join(logDir, file);
+      const stats = statSync(filepath);
+
+      if (stats.mtimeMs < cutoff) {
+        unlinkSync(filepath);
+      }
+    }
+  } catch {
+    // Ignore cleanup errors
+  }
 }
 
 function printDryRunSummary(transactions: EnrichedTransaction[]) {
-  const byAccount = groupByAccount(transactions);
+  const summary = calculateSummary(transactions);
 
   console.log("\n--- Dry Run Summary ---");
 
-  let totalOutflow = 0;
-  let totalInflow = 0;
-
-  for (const [account, txns] of byAccount) {
-    let outflow = 0;
-    let inflow = 0;
-
-    for (const txn of txns) {
-      const amount = txn.chargedAmount ?? 0;
-      if (amount < 0) outflow += Math.abs(amount);
-      if (amount > 0) inflow += amount;
-    }
-
-    totalOutflow += outflow;
-    totalInflow += inflow;
-
-    console.log(`\n${account}: ${txns.length} transactions`);
-    console.log(`  Outflow: ₪${outflow.toFixed(2)}`);
-    console.log(`  Inflow: ₪${inflow.toFixed(2)}`);
+  for (const [account, data] of summary.byAccount) {
+    console.log(`\n${account}: ${data.count} transactions`);
+    console.log(`  Outflow: ₪${data.outflow.toFixed(2)}`);
+    console.log(`  Inflow: ₪${data.inflow.toFixed(2)}`);
   }
 
   console.log("\n--- Totals ---");
   console.log(`Transactions: ${transactions.length}`);
-  console.log(`Outflow: ₪${totalOutflow.toFixed(2)}`);
-  console.log(`Inflow: ₪${totalInflow.toFixed(2)}`);
+  console.log(`Outflow: ₪${summary.totalOutflow.toFixed(2)}`);
+  console.log(`Inflow: ₪${summary.totalInflow.toFixed(2)}`);
 }
