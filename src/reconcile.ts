@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import {
   normalizeRow,
   getEffectiveDate,
@@ -31,11 +30,13 @@ export interface FlaggedTransaction {
 const DATE_TOLERANCE_DAYS = 2;
 
 export function reconcile(
-  sourceFile: string,
-  targetFile: string
+  sourceContent: string,
+  targetContent: string,
+  sourceLabel: string,
+  targetLabel: string
 ): ReconcileResult {
-  const sourceTransactions = parseCSVFile(sourceFile);
-  const targetTransactions = parseCSVFile(targetFile);
+  const sourceTransactions = parseCSV(sourceContent);
+  const targetTransactions = parseCSV(targetContent);
 
   const targetPool = [...targetTransactions];
   const matched: MatchedTransaction[] = [];
@@ -60,8 +61,8 @@ export function reconcile(
   }
 
   return {
-    sourceFile,
-    targetFile,
+    sourceFile: sourceLabel,
+    targetFile: targetLabel,
     sourceCount: sourceTransactions.length,
     targetCount: targetTransactions.length,
     matched,
@@ -120,11 +121,6 @@ function removeFromPool(pool: NormalizedTransaction[], item: NormalizedTransacti
   if (index !== -1) {
     pool.splice(index, 1);
   }
-}
-
-function parseCSVFile(filepath: string): NormalizedTransaction[] {
-  const content = readFileSync(filepath, "utf-8");
-  return parseCSV(content);
 }
 
 export function parseCSV(content: string): NormalizedTransaction[] {
