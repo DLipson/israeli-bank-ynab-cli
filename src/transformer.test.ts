@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseInstallments,
-  adjustInstallmentDate,
+  deriveYnabSafeInstallmentDate,
   formatDate,
   parseDate,
   buildMemo,
@@ -62,6 +62,28 @@ describe("parseDate", () => {
     expect(date).toBeInstanceOf(Date);
   });
 
+  it("parses DD/MM/YYYY format (Israeli banks)", () => {
+    const date = parseDate("10/02/2026");
+    expect(date).toBeInstanceOf(Date);
+    expect(date?.getFullYear()).toBe(2026);
+    expect(date?.getMonth()).toBe(1); // February (0-indexed)
+    expect(date?.getDate()).toBe(10);
+  });
+
+  it("parses DD/MM/YY format with century handling", () => {
+    const date1 = parseDate("15/03/24");
+    expect(date1?.getFullYear()).toBe(2024);
+
+    const date2 = parseDate("15/03/75");
+    expect(date2?.getFullYear()).toBe(1975);
+  });
+
+  it("parses dates with different separators", () => {
+    expect(parseDate("10/02/2026")).toBeInstanceOf(Date);
+    expect(parseDate("10-02-2026")).toBeInstanceOf(Date);
+    expect(parseDate("10.02.2026")).toBeInstanceOf(Date);
+  });
+
   it("returns null for invalid dates", () => {
     expect(parseDate("not-a-date")).toBeNull();
     expect(parseDate("")).toBeNull();
@@ -88,23 +110,28 @@ describe("formatDate", () => {
   });
 });
 
-describe("adjustInstallmentDate", () => {
-  it("returns original date for installment 1", () => {
-    expect(adjustInstallmentDate("2024-03-15", 1)).toBe("2024-03-15");
+describe("deriveYnabSafeInstallmentDate", () => {
+  it("applies fixed offset: subtract 1 month, add 1 day", () => {
+    // Feb 10 -> Jan 11
+    expect(deriveYnabSafeInstallmentDate("2026-02-10")).toBe("2026-01-11");
+    // March 15 -> Feb 16
+    expect(deriveYnabSafeInstallmentDate("2024-03-15")).toBe("2024-02-16");
   });
 
-  it("adds days for subsequent installments", () => {
-    expect(adjustInstallmentDate("2024-03-15", 2)).toBe("2024-03-16");
-    expect(adjustInstallmentDate("2024-03-15", 3)).toBe("2024-03-17");
-    expect(adjustInstallmentDate("2024-03-15", 12)).toBe("2024-03-26");
+  it("handles DD/MM/YYYY format from Israeli banks", () => {
+    // 10/02/2026 (Feb 10, 2026) -> Jan 11, 2026
+    expect(deriveYnabSafeInstallmentDate("10/02/2026")).toBe("2026-01-11");
   });
 
-  it("handles month boundaries", () => {
-    expect(adjustInstallmentDate("2024-03-30", 5)).toBe("2024-04-03");
+  it("handles year boundaries", () => {
+    // Jan 15, 2024 -> Dec 16, 2023
+    expect(deriveYnabSafeInstallmentDate("2024-01-15")).toBe("2023-12-16");
   });
 
-  it("returns original string for invalid dates", () => {
-    expect(adjustInstallmentDate("invalid", 2)).toBe("invalid");
+  it("handles month with different day counts", () => {
+    // March 31 -> Feb 31 (invalid, becomes March 2) -> March 3 after +1 day
+    // 2024 is a leap year, so Feb has 29 days
+    expect(deriveYnabSafeInstallmentDate("2024-03-31")).toBe("2024-03-03");
   });
 });
 
@@ -257,16 +284,26 @@ describe("transformTransaction", () => {
     expect(transformTransaction(txn)).toBeNull();
   });
 
-  it("adjusts date for installment 2+", () => {
+  it("applies fixed offset for installment transactions", () => {
+    // baseTxn has processedDate: "2024-03-15"
+    // For installments, use charge date with offset: subtract 1 month, add 1 day
+    // 2024-03-15 -> 2024-02-16
     const txn = { ...baseTxn, description: "רכישה תשלום 3 מ-12" };
     const row = transformTransaction(txn);
-    expect(row!.date).toBe("2024-03-17"); // +2 days for installment 3
+    expect(row!.date).toBe("2024-02-16");
   });
 
-  it("does not adjust date for installment 1", () => {
-    const txn = { ...baseTxn, description: "רכישה תשלום 1 מ-12" };
+  it("uses transaction date for regular (non-installment) transactions", () => {
+    // Regular transaction with different transaction and charge dates
+    const txn = {
+      ...baseTxn,
+      date: "2024-03-10T00:00:00+02:00",
+      processedDate: "2024-03-15T00:00:00+02:00",
+      description: "רכישה רגילה", // No installment pattern
+    };
     const row = transformTransaction(txn);
-    expect(row!.date).toBe("2024-03-15");
+    // Should use transaction date (date field), not charge date (processedDate)
+    expect(row!.date).toBe("2024-03-10");
   });
 });
 
