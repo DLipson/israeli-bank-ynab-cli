@@ -61,36 +61,71 @@ export function parseInstallments(text: string): InstallmentInfo | null {
 /**
  * Adjust date for installment transactions to prevent YNAB duplicate detection.
  *
- * YNAB flags transactions with same date/amount as duplicates. For installments,
- * we spread them across different days:
- * - Installment 1: original date
- * - Installment 2: original date + 1 day
- * - Installment 3: original date + 2 days
- * - etc.
+ * Applies a fixed offset to installment charge dates:
+ * - Subtracts 1 month
+ * - Adds 1 day
  *
- * @param isoDate - ISO date string from scraper
- * @param installmentNumber - Which installment (1-based)
+ * This provides a consistent transformation for all installments while preserving
+ * the actual charge date in the memo field.
+ *
+ * @param dateString - Date string from scraper (ISO or DD/MM/YYYY format)
  */
-export function adjustInstallmentDate(isoDate: string, installmentNumber: number): string {
-  const date = parseDate(isoDate);
-  if (!date) {
-    return isoDate; // Return original if parsing fails
+export function deriveYnabSafeInstallmentDate(dateString: string): string {
+  const formatted = formatDate(dateString);
+
+  const [year, month, day] = formatted.split("-");
+  if (!year || !month || !day) {
+    return formatted;
   }
 
-  // Spread installments: add (installmentNumber - 1) days
-  // Installment 1 = no change, 2 = +1 day, 3 = +2 days, etc.
-  if (installmentNumber > 1) {
-    date.setDate(date.getDate() + (installmentNumber - 1));
+  const baseDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (isNaN(baseDate.getTime())) {
+    return formatted;
   }
 
-  return formatDate(date);
+  // Apply fixed offset: subtract 1 month, add 1 day
+  baseDate.setUTCMonth(baseDate.getUTCMonth() - 1);
+  baseDate.setUTCDate(baseDate.getUTCDate() + 1);
+
+  const adjustedYear = baseDate.getUTCFullYear();
+  const adjustedMonth = String(baseDate.getUTCMonth() + 1).padStart(2, "0");
+  const adjustedDay = String(baseDate.getUTCDate()).padStart(2, "0");
+  return `${adjustedYear}-${adjustedMonth}-${adjustedDay}`;
 }
 
 /**
  * Parse a date string into a Date object.
+ * Handles both ISO format and DD/MM/YYYY format (Israeli banks).
  * Returns null for invalid dates.
  */
 export function parseDate(input: string): Date | null {
+  if (!input || typeof input !== "string") {
+    return null;
+  }
+
+  const trimmed = input.trim();
+
+  // Check for DD/MM/YYYY format (e.g., "10/02/2026")
+  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1], 10);
+    const month = parseInt(ddmmyyyyMatch[2], 10);
+    let year = parseInt(ddmmyyyyMatch[3], 10);
+
+    // Handle 2-digit years
+    if (year < 100) {
+      year = year >= 70 ? 1900 + year : 2000 + year;
+    }
+
+    // Create date (month is 0-indexed in Date constructor)
+    const date = new Date(year, month - 1, day);
+    if (isNaN(date.getTime())) {
+      return null;
+    }
+    return date;
+  }
+
+  // Try ISO format or other standard formats
   const date = new Date(input);
   if (isNaN(date.getTime())) {
     return null;
@@ -102,9 +137,9 @@ export function parseDate(input: string): Date | null {
  * Format date as YYYY-MM-DD (YNAB's expected format).
  */
 export function formatDate(input: string | Date): string {
-  const date = typeof input === "string" ? new Date(input) : input;
+  const date = typeof input === "string" ? parseDate(input) : input;
 
-  if (isNaN(date.getTime())) {
+  if (!date || isNaN(date.getTime())) {
     throw new Error(`Invalid date: ${String(input)}`);
   }
 
@@ -226,18 +261,22 @@ export function transformTransaction(txn: EnrichedTransaction): YnabRow | null {
       ? { number: txn.installments.number, total: txn.installments.total }
       : null);
 
-  // Determine the date to use (prefer charge date, fall back to transaction date)
-  const rawDate = txn.processedDate || txn.date;
-  if (!rawDate) {
-    return null;
-  }
-
-  // Format date, adjusting for installments if needed
+  // Determine the date to use:
+  // - Installments: use charge date (processedDate) with offset
+  // - Regular transactions: use transaction date
   let date: string;
-  if (installments && installments.number > 1) {
-    date = adjustInstallmentDate(rawDate, installments.number);
+  if (installments) {
+    const chargeDate = txn.processedDate || txn.date;
+    if (!chargeDate) {
+      return null;
+    }
+    date = deriveYnabSafeInstallmentDate(chargeDate);
   } else {
-    const parsed = parseDate(rawDate);
+    const txnDate = txn.date || txn.processedDate;
+    if (!txnDate) {
+      return null;
+    }
+    const parsed = parseDate(txnDate);
     if (!parsed) {
       return null;
     }
@@ -284,7 +323,9 @@ export function transformTransactions(transactions: EnrichedTransaction[]): Ynab
 /**
  * Group transactions by account name.
  */
-export function groupByAccount(transactions: EnrichedTransaction[]): Map<string, EnrichedTransaction[]> {
+export function groupByAccount(
+  transactions: EnrichedTransaction[]
+): Map<string, EnrichedTransaction[]> {
   const byAccount = new Map<string, EnrichedTransaction[]>();
 
   for (const txn of transactions) {
@@ -305,9 +346,10 @@ export interface SkippedItem {
 /**
  * Partition transactions into kept and skipped, with skip reasons.
  */
-export function filterAndPartition(
-  transactions: EnrichedTransaction[]
-): { kept: EnrichedTransaction[]; skipped: SkippedItem[] } {
+export function filterAndPartition(transactions: EnrichedTransaction[]): {
+  kept: EnrichedTransaction[];
+  skipped: SkippedItem[];
+} {
   const kept: EnrichedTransaction[] = [];
   const skipped: SkippedItem[] = [];
 
