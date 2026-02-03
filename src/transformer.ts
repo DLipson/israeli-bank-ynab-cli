@@ -192,17 +192,10 @@ export function buildMemo(txn: EnrichedTransaction, installments: InstallmentInf
     }
   }
 
-  // Reference number (אסמכתא)
-  if (txn.identifier) {
-    memo.ref = txn.identifier;
-  }
-
-  // Account info
-  if (txn.accountNumber) {
-    memo.account = txn.accountNumber;
-  }
-  if (txn.accountName) {
-    memo.source = txn.accountName;
+  // Account info (combine source + account number when available)
+  const accountLabel = [txn.accountName, txn.accountNumber].filter(Boolean).join(" - ");
+  if (accountLabel) {
+    memo.source = accountLabel;
   }
 
   // Transaction type (only if not "normal")

@@ -71,14 +71,14 @@ describe("toCSV", () => {
       {
         date: "2024-03-15",
         payee: "Test",
-        memo: '{"ref":"123","source":"Max"}',
+        memo: '{"source":"Max - 1234"}',
         outflow: "100.00",
         inflow: "",
       },
     ];
     const csv = toCSV(rows);
     // JSON has quotes, so memo should be escaped
-    expect(csv).toContain('"{""ref"":""123"",""source"":""Max""}"');
+    expect(csv).toContain('"{""source"":""Max - 1234""}"');
   });
 
   it("handles multiple rows", () => {

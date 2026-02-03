@@ -189,14 +189,7 @@ describe("buildMemo", () => {
   it("includes account info", () => {
     const txn = { ...baseTxn, accountNumber: "1234", accountName: "Leumi" };
     const memo = JSON.parse(buildMemo(txn, null));
-    expect(memo.account).toBe("1234");
-    expect(memo.source).toBe("Leumi");
-  });
-
-  it("includes reference number", () => {
-    const txn = { ...baseTxn, identifier: "REF123" };
-    const memo = JSON.parse(buildMemo(txn, null));
-    expect(memo.ref).toBe("REF123");
+    expect(memo.source).toBe("Leumi - 1234");
   });
 
   it("excludes type when normal", () => {
