@@ -1,14 +1,15 @@
-# Israeli Bank YNAB CLI
+# Israeli Bank YNAB Transformer
 
-A command-line tool that scrapes Israeli bank and credit card accounts and transforms the data into YNAB-ready CSV files with correct timezone handling and Hebrew transaction support.
+A GUI that scrapes Israeli bank and credit card accounts and transforms the data into YNAB-ready CSV files with correct timezone handling and Hebrew transaction support.
 
 ## Purpose
 
-This tool provides a streamlined workflow for Israeli YNAB users:
+This project provides an interactive workflow to:
 
 1. **Scrape** transactions from Israeli banks and credit cards
 2. **Transform** Hebrew transaction data into YNAB's import format
 3. **Export** clean CSV files ready for YNAB import
+4. **Review** results before writing files
 
 ## The Problem
 
@@ -21,7 +22,7 @@ This causes problems when:
 - Running scheduled jobs on cloud servers in different timezones
 - Transactions near midnight appear on the wrong date
 
-**This tool uses a modified version of israeli-bank-scrapers** that preserves the original `Asia/Jerusalem` timezone in ISO date strings (e.g., `2024-03-15T00:00:00+02:00` instead of `2024-03-14T22:00:00.000Z`).
+**This project uses a modified version of israeli-bank-scrapers** that preserves the original `Asia/Jerusalem` timezone in ISO date strings (e.g., `2024-03-15T00:00:00+02:00` instead of `2024-03-14T22:00:00.000Z`).
 
 ### Hebrew Transaction Data
 
@@ -40,53 +41,33 @@ YNAB expects:
 
 Credit card installments (`תשלומים`) create a common problem: YNAB sees multiple transactions with the same date and similar amounts, flagging them as duplicates.
 
-This tool adjusts installment dates to spread them across different days, preventing false duplicate detection while preserving all transaction metadata in the memo field.
+This project adjusts installment dates to spread them across different days, preventing false duplicate detection while preserving all transaction metadata in the memo field.
 
 ## Why Not Use Caspion or Moneyman?
 
-[Caspion](https://github.com/brafdlog/caspion) and [Moneyman](https://github.com/daniel-hauser/moneyman) are excellent tools that also use israeli-bank-scrapers. Here's how this CLI differs:
+[Caspion](https://github.com/brafdlog/caspion) and [Moneyman](https://github.com/daniel-hauser/moneyman) are excellent tools that also use israeli-bank-scrapers. Here's how this project differs:
 
-| Feature | This CLI | Caspion | Moneyman |
-|---------|----------|---------|----------|
-| **Focus** | Single-purpose YNAB export | Full desktop app | Multi-destination automation |
-| **Complexity** | ~300 lines | ~15,000+ lines | ~5,000+ lines |
+| Feature | This Project | Caspion | Moneyman |
+|---------|--------------|---------|----------|
+| **Focus** | YNAB export via GUI | Full desktop app | Multi-destination automation |
+| **Complexity** | ~300 lines (core logic) | ~15,000+ lines | ~5,000+ lines |
 | **Timezone fix** | Built-in (modified scrapers) | Requires patching | Requires patching |
 | **Hebrew installment handling** | Custom date spreading | Standard export | Standard export |
 | **Metadata preservation** | JSON memo field | Limited | Limited |
 | **Dependencies** | Minimal | Electron, React, MobX | Multiple export SDKs |
-| **Use case** | CLI/scripting/cron | Interactive desktop use | Cloud automation |
-
-**Choose this CLI if you:**
-- Want a simple, scriptable tool for YNAB import
-- Need correct timezone handling without patching dependencies
-- Want full control over the transformation logic
-- Prefer minimal dependencies
-- Run scraping from scripts or cron jobs
-
-**Choose Caspion if you:**
-- Want a desktop GUI
-- Need encrypted credential storage
-- Want built-in scheduling with a visual interface
-
-**Choose Moneyman if you:**
-- Export to multiple destinations (Google Sheets, Actual Budget, Buxfer, etc.)
-- Run automated scrapes via GitHub Actions
-- Want Telegram notifications
+| **Use case** | Interactive GUI | Interactive desktop use | Cloud automation |
 
 ## Features
 
+- **GUI-first workflow** for scraping, review, and export
 - **Correct timezone handling** - Dates preserve Israel timezone
 - **Hebrew column mapping** - Automatic translation of 50+ Hebrew column variations
 - **Installment support** - Detects `תשלום X מ-Y` patterns and adjusts dates
 - **Metadata preservation** - Transaction details stored as JSON in YNAB memo field
-- **Multiple banks** - Supports all banks from israeli-bank-scrapers:
-  - Leumi, Hapoalim, Discount, Mizrahi, Mercantile, Otsar Hahayal
-  - Max, Visa Cal, Isracard, Amex
-  - And more
+- **Multiple banks** - Supports all banks from israeli-bank-scrapers
 - **Flexible output** - Single merged CSV or separate files per account
 - **Audit logging** - Per-run logs with transaction counts, skipped items, and checksums
 - **Reconciliation** - Compare bank CSVs against scraper output to verify accuracy
-- **Dry-run mode** - Preview what would be exported without writing files
 
 ## Installation
 
@@ -114,8 +95,8 @@ This tool adjusts installment dates to spread them across different days, preven
 
    ```bash
    cd ~/Dev
-   git clone <this-repo-url> israeli-bank-ynab-cli
-   cd israeli-bank-ynab-cli
+   git clone <this-repo-url> israeli-bank-ynab-transformer
+   cd israeli-bank-ynab-transformer
    ```
 
 3. **Install dependencies:**
@@ -172,124 +153,17 @@ OUTPUT_DIR=./output
 
 Accounts are automatically enabled when credentials are present.
 
-## Usage
+## Quick Start (GUI)
 
-### List Configured Accounts
-
-```bash
-npm run dev list-accounts
-```
-
-### Scrape All Accounts
+Run the API server and GUI together:
 
 ```bash
-# Scrape last 60 days (default)
-npm run scrape
-
-# Scrape last 90 days
-npm run scrape -- --days-back 90
-
-# Show browser during scraping (for debugging)
-npm run scrape:show
-
-# Output to specific directory
-npm run scrape -- --output ./my-exports
-
-# Generate separate CSV per account
-npm run scrape -- --split
+npm run dev:all
 ```
 
-### CLI Options
-
-```
-Usage: israeli-bank-ynab scrape [options]
-
-Options:
-  -d, --days-back <days>  Number of days to scrape (default: "60")
-  -s, --show-browser      Show browser window during scraping
-  -o, --output <dir>      Output directory (default: "./output")
-  --split                 Generate separate CSV per account
-  --dry-run               Preview without writing files
-  -h, --help              Display help
-```
-
-### Dry Run Mode
-
-Preview what would be exported without writing any files:
-
-```bash
-npm run scrape -- --dry-run
-```
-
-Output shows transaction counts and totals per account.
-
-### Reconciliation
-
-Compare a bank CSV export against scraper output to verify nothing was missed or duplicated:
-
-```bash
-# Compare bank export against scraper output
-npm run dev reconcile bank-export.csv scraper-output.csv
-```
-
-The reconcile command:
-- Parses both CSVs (supports Hebrew bank formats and YNAB format)
-- Matches transactions by amount and date
-- Flags matches with 1-2 day date differences
-- Reports missing and extra transactions
-
-Example output:
-
-```
-Reconciliation: bank-export.csv vs scraper-output.csv
-======================================================================
-
-⚠ DISCREPANCIES FOUND
-
-MATCHED WITH DATE DISCREPANCY (1):
-  ⚠ 2024-03-15 |  -₪   200.00 | קפה גרג                        (date diff: 1 day)
-
-MISSING FROM TARGET (1):
-  ✗ 2024-03-18 |  -₪    45.00 | אושר עד
-
-SUMMARY:
-  Source transactions:  47
-  Target transactions:  46
-  Exact matches:        45
-  Flagged matches:       1
-  Missing from target:   1
-  Extra in target:       0
-```
-
-### Audit Logging
-
-Every scrape run creates a log file in `./logs/` with:
-- Transaction counts per account
-- Skipped transactions (pending, zero amount) with reasons
-- Output file path and checksum
-- Total inflow/outflow
-
-Logs older than 14 days are automatically deleted.
-
-Example log:
-
-```
-=== Scrape Run: 2024-03-15T10:30:45 ===
-
-Accounts:
-  Max: 23 transactions (₪4,520.00 out, ₪0.00 in)
-  Leumi: 31 transactions (₪8,120.00 out, ₪350.00 in)
-
-Skipped (2):
-  - Pending: "סופר פארם" ₪45.00 (2024-03-14)
-  - Zero amount: "ביטול עסקה" ₪0.00 (2024-03-12)
-
-Output: ./output/ynab-transactions-2024-03-15T10-30-45.csv
-  52 transactions
-  Total: ₪12,640.00 outflow, ₪350.00 inflow
-
-Checksum: a1b2c3d4e5f6g7h8
-```
+This starts:
+- API server at `http://localhost:3001`
+- GUI at Vite's default dev server (typically `http://localhost:5173`)
 
 ## Output Format
 
@@ -325,7 +199,7 @@ Transaction metadata is preserved as JSON in the memo field:
 
 ### 1. Scraping
 
-The tool uses your modified israeli-bank-scrapers to fetch transactions. Each bank scraper:
+The project uses your modified israeli-bank-scrapers to fetch transactions. Each bank scraper:
 - Launches a Puppeteer browser
 - Logs into your bank account
 - Navigates to transaction history
@@ -337,7 +211,7 @@ The tool uses your modified israeli-bank-scrapers to fetch transactions. Each ba
 Each transaction goes through the transformation pipeline:
 
 ```
-Bank Transaction → Normalize Dates → Detect Installments → Build YNAB Row → Write CSV
+Bank Transaction -> Normalize Dates -> Detect Installments -> Build YNAB Row -> Write CSV
 ```
 
 **Date Normalization:**
@@ -347,15 +221,15 @@ Bank Transaction → Normalize Dates → Detect Installments → Build YNAB Row 
 
 **Installment Detection:**
 - Regex patterns match Hebrew installment notation
-- `תשלום 2 מ-12` → `{ number: 2, total: 12 }`
+- `תשלום 2 מ-12` -> `{ number: 2, total: 12 }`
 - Date adjusted to prevent YNAB duplicate detection
 
 **YNAB Row Mapping:**
-- `date` ← processedDate (charge date) or transaction date
-- `payee` ← description
-- `outflow` ← negative chargedAmount (expenses)
-- `inflow` ← positive chargedAmount (deposits/refunds)
-- `memo` ← JSON with all other metadata
+- `date` -> processedDate (charge date) or transaction date
+- `payee` -> description
+- `outflow` -> negative chargedAmount (expenses)
+- `inflow` -> positive chargedAmount (deposits/refunds)
+- `memo` -> JSON with all other metadata
 
 ### 3. Output
 
@@ -370,8 +244,8 @@ To fix timezone handling in israeli-bank-scrapers, apply these changes:
 In `src/scrapers/base-scraper.ts`, add at the top:
 
 ```typescript
-import moment from 'moment-timezone';
-moment.tz.setDefault('Asia/Jerusalem');
+import moment from "moment-timezone";
+moment.tz.setDefault("Asia/Jerusalem");
 ```
 
 ### 2. Preserve Timezone in ISO Strings
@@ -412,29 +286,19 @@ npm install
 npm run build
 ```
 
-Then reinstall this CLI:
+Then reinstall this project:
 
 ```bash
-cd ../israeli-bank-ynab-cli
+cd ../israeli-bank-ynab-transformer
 rm -rf node_modules package-lock.json
 npm install
 ```
 
 ### "No accounts enabled for scraping"
 
-Check that your `.env` file exists and has credentials:
-
-```bash
-npm run dev list-accounts
-```
+Check that your `.env` file exists and has credentials.
 
 ### Browser Crashes or Timeouts
-
-Try running with the browser visible to see what's happening:
-
-```bash
-npm run scrape:show
-```
 
 Common issues:
 - Bank website changed (may need scraper update)
@@ -449,19 +313,20 @@ Verify your israeli-bank-scrapers has the timezone modifications applied. Check 
 ## Project Structure
 
 ```
-israeli-bank-ynab-cli/
+israeli-bank-ynab-transformer/
+├── gui/                           # React GUI (Vite)
 ├── src/
-│   ├── index.ts                  # CLI entry point (commander)
-│   ├── config.ts                 # Account configuration from env vars
-│   ├── scraper.ts                # Wrapper around israeli-bank-scrapers
-│   ├── transformer.ts            # YNAB transformation logic
-│   ├── csv-writer.ts             # CSV output utilities
-│   ├── reconcile.ts              # CSV comparison and reporting
-│   ├── column-standardization.ts # Hebrew/English column mapping
-│   ├── audit-logger.ts           # Per-run logging with auto-cleanup
-│   └── *.test.ts                 # Tests (100 total)
-├── logs/                         # Audit logs (auto-cleaned after 14 days)
-├── output/                       # Generated CSV files
+│   ├── server/                    # Express API server for the GUI
+│   ├── config.ts                  # Account configuration from env vars
+│   ├── scraper.ts                 # Wrapper around israeli-bank-scrapers
+│   ├── transformer.ts             # YNAB transformation logic
+│   ├── csv-writer.ts              # CSV output utilities
+│   ├── reconcile.ts               # CSV comparison and reporting
+│   ├── column-standardization.ts  # Hebrew/English column mapping
+│   ├── audit-logger.ts            # Per-run logging with auto-cleanup
+│   └── *.test.ts                  # Tests
+├── logs/                          # Audit logs (auto-cleaned after 14 days)
+├── output/                        # Generated CSV files
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
@@ -471,13 +336,11 @@ israeli-bank-ynab-cli/
 ## Development
 
 ```bash
-# Run in development mode
-npm run dev list-accounts
-npm run dev scrape# Build TypeScript
-npm run build
+# Run API server + GUI
+npm run dev:all
 
-# Run built version
-npm start
+# Build TypeScript
+npm run build
 
 # Run tests
 npm test
