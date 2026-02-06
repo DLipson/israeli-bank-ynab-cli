@@ -124,6 +124,8 @@ export function createScrapeStream(
   showBrowser: boolean,
   enableDetailedLogging: boolean,
   detailedLoggingLimit: number,
+  selectedAccounts: string[],
+  scrapeId: string,
   onEvent: (event: SSEEvent) => void
 ): EventSource {
   const params = new URLSearchParams({
@@ -132,6 +134,12 @@ export function createScrapeStream(
     enableDetailedLogging: String(enableDetailedLogging),
     detailedLoggingLimit: String(detailedLoggingLimit),
   });
+  if (selectedAccounts.length > 0) {
+    params.set("accounts", selectedAccounts.join(","));
+  }
+  if (scrapeId) {
+    params.set("scrapeId", scrapeId);
+  }
   const es = new EventSource(`${BASE}/scrape/stream?${params}`);
 
   es.onmessage = (e) => {
@@ -152,6 +160,18 @@ export function createScrapeStream(
   };
 
   return es;
+}
+
+export async function cancelScrape(scrapeId: string): Promise<void> {
+  const res = await fetch(`${BASE}/scrape/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scrapeId }),
+  });
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error || "Failed to cancel scrape");
+  }
 }
 
 // --- Export ---
